@@ -37,27 +37,27 @@ public fun evalOp (op, l, r) {
 --
 -- A expression is represented by a data structure of the following shape:
 --
--- expr = Assn    (string, expr)       |
---        Seq     (expr, expr)         |
---        Skip                         |
---        Read    (string)             |
---        Write   (expr)               |
---        If      (expr, expr, expr)   |
---        While   (expr, expr)         |
---        DoWhile (expr, expr)         |
---        Var     (string)             |
---        Ref     (string)             |
---        Const   (int)                |
---        Binop   (string, expr, expr) |
---        Scope   (def list, expr)     |
---        Call    (string, expr list)  |
---        Ignore  (expr)
+-- expr = Assn    (string, expr)
+--      | Seq     (expr, expr)
+--      | Skip
+--      | Read    (string)
+--      | Write   (expr)
+--      | If      (expr, expr, expr)
+--      | While   (expr, expr)
+--      | DoWhile (expr, expr)
+--      | Var     (string)
+--      | Ref     (string)
+--      | Const   (int)
+--      | Binop   (string, expr, expr)
+--      | Scope   (def list, expr)
+--      | Call    (string, expr list)
+--      | Ignore  (expr)
 --
 -- A definition is either a local variable definition or a function
 -- definition:
 --
--- def = Var (string list)                |
---       Fun (string, string list, expr)
+-- def = Var (string)
+--     | Fun (string, string list, expr)
 
 -- Helper function: checks that given name designates a regular variable in
 -- a given state
@@ -102,8 +102,54 @@ fun evalList (c, exprs) {
 }
 
 (* Assignment *)
+fun void (c) { [c, Z] }
+
 fun eval (c@[s, w], expr) {
-  failure ("evalExpr not implemented\n")
+  case expr of
+    Assn (v, x) -> case evalList (c, {v, x}) of
+      [[s, w], {v, x}] -> [[s <- [v, x], w], x]
+    esac
+  | Seq (l, r) -> case evalList (c, {l, r}) of
+      [c, {_, x}] -> [c, x]
+    esac
+  | Skip -> void (c)
+  | Read (v) -> case w.readWorld of
+      [x, w] -> void ([s <- [v, x], w])
+    esac
+  | Write (x) -> case eval (c, x) of
+      [c, x] -> void ([s, writeWorld (x, w)])
+    esac
+  | If (cond, t, f) -> case eval (c, cond) of
+      [c, cond] -> if cond then eval (c, t) else eval (c, f) fi
+    esac
+  | While (cond, b) -> case eval (c, cond) of
+      [c, cond] -> if cond then eval (eval (c, b) [0], expr) else void (c) fi
+    esac
+  | DoWhile (b, cond) -> case eval (eval (c, b) [0], cond) of
+      [c, cond] -> if cond then eval (c, expr) else void (c) fi
+    esac
+  | Var   (v) -> [c, s.lookup (v)]
+  | Ref   (v) -> [c, v]
+  | Const (x) -> [c, x]
+  | Binop (op, l, r) -> case evalList (c, {l, r}) of
+      [c, {l, r}] -> [c, evalOp (op, l, r)]
+    esac
+  | Scope (ds, e) ->
+      case foldl (fun (s, d) {
+        case d of
+          Var (x) -> s.addName (x, 0)
+        | Fun (f, xs, e) -> s.addName (f, fun (as) { failure ("TODO function") })
+        esac
+      }, s.enterScope, ds) of
+        s -> case eval ([s, w], e) of
+          [[s, w], res] -> [[s.leaveScope, w], res]
+        esac
+      esac
+  | Ignore (x) -> case eval (c, x) of
+      [c, _] -> void (c)
+    esac
+  | _ -> failure (sprintf ("evalExpr not implemented: %s\n", expr.string))
+  esac
 }
 (* End *)
 
